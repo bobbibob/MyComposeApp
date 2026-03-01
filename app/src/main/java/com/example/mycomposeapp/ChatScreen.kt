@@ -1,5 +1,7 @@
 package com.example.mycomposeapp
 
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,6 +24,7 @@ fun ChatScreen() {
     var input by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     val messages = remember { mutableStateListOf<Msg>() }
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         Text("Local Model Chat", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -57,9 +60,8 @@ fun ChatScreen() {
 
                     thread {
                         val reply = postToLocalModel(text)
-                        val out = reply.ifBlank { "(empty reply)" }
-                        androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
-                            messages.add(Msg("assistant", out))
+                        mainHandler.post {
+                            messages.add(Msg("assistant", reply.ifBlank { "(empty reply)" }))
                             busy = false
                         }
                     }
@@ -82,13 +84,15 @@ private fun postToLocalModel(message: String): String {
             connectTimeout = 8000
             readTimeout = 120000
         }
+
         val payload = JSONObject().put("message", message).toString()
         conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
 
         val code = conn.responseCode
         val stream = if (code in 200..299) conn.inputStream else conn.errorStream
         val body = BufferedReader(InputStreamReader(stream)).readText()
-        JSONObject(body).optString("reply", "")
+
+        JSONObject(body).optString("reply", "Error: bad JSON")
     } catch (e: Exception) {
         "Error: ${e.message}"
     }
