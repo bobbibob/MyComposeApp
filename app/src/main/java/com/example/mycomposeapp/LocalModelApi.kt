@@ -7,30 +7,34 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 object LocalModelApi {
+
     private const val ENDPOINT = "http://127.0.0.1:8080/chat"
 
+    private fun extractJson(text: String): String {
+        val start = text.indexOf('{')
+        val end = text.lastIndexOf('}')
+        if (start == -1 || end == -1 || end <= start) {
+            throw RuntimeException("Model did not return JSON")
+        }
+        return text.substring(start, end + 1)
+    }
+
     fun requestFilesJson(appDescription: String): JSONObject {
+
         val prompt = """
 Ты — senior Android developer.
-Проект: Kotlin + Jetpack Compose, package com.example.mycomposeapp.
-Нужно реализовать приложение/изменения по описанию ниже.
 
-Жёсткие правила:
-- Верни ТОЛЬКО валидный JSON, без пояснений и без markdown.
-- Формат JSON:
+Верни ТОЛЬКО JSON без пояснений.
+
+Формат:
 {
-  "commit_message": "коротко",
-  "files": [
-    {"path":"app/src/main/java/.../File.kt","content":"..."},
-    {"path":"app/src/main/res/...","content":"..."}
+  "commit_message":"...",
+  "files":[
+    {"path":"...","content":"..."}
   ]
 }
-- Разрешённые пути: app/src/main/java/, app/src/main/res/, app/src/main/AndroidManifest.xml
-- НЕ трогай версии Gradle/Kotlin/AGP.
-- Если нужен новый файл — добавь его в files.
-- Контент файлов должен быть полным.
 
-ОПИСАНИЕ:
+Описание:
 $appDescription
         """.trimIndent()
 
@@ -45,12 +49,18 @@ $appDescription
         val payload = JSONObject().put("message", prompt).toString()
         conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
 
-        val code = conn.responseCode
-        val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-        val body = BufferedReader(InputStreamReader(stream)).readText()
+        val stream =
+            if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
 
+        val body = BufferedReader(InputStreamReader(stream)).readText()
         val reply = JSONObject(body).optString("reply", "")
-        if (reply.isBlank()) throw RuntimeException("Model returned empty reply")
-        return JSONObject(reply) // обязано быть чистым JSON
+
+        if (reply.isBlank())
+            throw RuntimeException("Empty model reply")
+
+        // ⭐ главное исправление
+        val jsonOnly = extractJson(reply)
+
+        return JSONObject(jsonOnly)
     }
 }
