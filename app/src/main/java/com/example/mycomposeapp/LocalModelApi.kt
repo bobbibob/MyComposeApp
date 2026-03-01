@@ -11,6 +11,8 @@ object LocalModelApi {
 
     private const val ENDPOINT = "http://127.0.0.1:8080/chat"
 
+    data class PlanResult(val plan: JSONObject, val raw: String)
+
     private fun post(message: String, timeoutMs: Int = 240_000): String {
         val conn = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
@@ -33,26 +35,28 @@ object LocalModelApi {
     private fun extractJson(text: String): String {
         val start = text.indexOf('{')
         val end = text.lastIndexOf('}')
-        if (start == -1 || end == -1 || end <= start) throw RuntimeException("Model did not return JSON")
+        if (start == -1 || end == -1 || end <= start) throw RuntimeException("Model did not return JSON. Raw: ${text.take(200)}")
         return text.substring(start, end + 1)
     }
 
-    /** Этап 1: получить план — список путей файлов */
-    fun requestPlan(appDescription: String): JSONObject {
-        val prompt = """
+    /** Этап 1: план с путями */
+    fun requestPlan(appDescription: String, retries: Int = 3): PlanResult {
+        val basePrompt = """
 Ты — senior Android developer.
 
-Сначала верни ПЛАН изменений. Верни ТОЛЬКО валидный JSON, без пояснений.
+Верни ТОЛЬКО валидный JSON и затем напиши маркер <END_JSON>.
+Никаких пояснений, никакого markdown.
 
 Формат:
 {
   "commit_message": "коротко",
   "paths": [
     "app/src/main/java/.../File.kt",
-    "app/src/main/res/.../something.xml",
+    "app/src/main/res/.../file.xml",
     "app/src/main/AndroidManifest.xml"
   ]
 }
+<END_JSON>
 
 Правила:
 - НЕ меняй версии Gradle/Kotlin/AGP.
@@ -63,30 +67,32 @@ object LocalModelApi {
 $appDescription
         """.trimIndent()
 
-        val reply = post(prompt, timeoutMs = 240_000)
-        return JSONObject(extractJson(reply))
+        var lastRaw = ""
+        var lastErr: Exception? = null
+
+        repeat(retries) { attempt ->
+            try {
+                val raw = post(basePrompt, timeoutMs = 240_000)
+                lastRaw = raw
+                val json = JSONObject(extractJson(raw))
+                return PlanResult(json, raw)
+            } catch (e: Exception) {
+                lastErr = e
+                // чуть меняем промпт, чтобы "встряхнуть" модель
+                Thread.sleep(500L + attempt * 400L)
+            }
+        }
+        throw RuntimeException("Plan failed after $retries tries. Last raw: ${lastRaw.take(400)}. Err: ${lastErr?.message}")
     }
 
-    /** Этап 2: получить конкретный файл */
+    /** Этап 2: контент конкретного файла */
     fun requestFileContent(appDescription: String, path: String): String {
         val prompt = """
-Ты — senior Android developer.
-
-Верни ТОЛЬКО ПОЛНЫЙ КОНТЕНТ файла для пути ниже.
-Никаких объяснений, никакого markdown, просто текст файла.
-
-Путь:
-$path
-
-Контекст/описание задачи:
-$appDescription
+Верни ТОЛЬКО полный контент файла для пути ниже. Никаких пояснений.
+Путь: $path
+Описание: $appDescription
         """.trimIndent()
-
-        // контент может быть длинным, дадим чуть больше времени
-        val reply = post(prompt, timeoutMs = 300_000)
-
-        // если модель вдруг вставит мусор — грубо вырежем до "package"/"<" для xml — но только если явно видно
-        return reply.trim()
+        return post(prompt, timeoutMs = 300_000).trim()
     }
 
     fun planToPaths(plan: JSONObject): List<String> {

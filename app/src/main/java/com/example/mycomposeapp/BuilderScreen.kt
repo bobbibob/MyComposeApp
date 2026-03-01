@@ -11,8 +11,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlin.concurrent.thread
 
@@ -68,13 +68,18 @@ fun BuilderScreen(context: Context) {
 
                 thread {
                     try {
-                        val plan = LocalModelApi.requestPlan(desc)
+                        val planRes = LocalModelApi.requestPlan(desc)
+                        val plan = planRes.plan
+                        val rawPlan = planRes.raw
+
                         val commitMsg = plan.optString("commit_message", "AI update")
                         val paths = LocalModelApi.planToPaths(plan)
                         if (paths.isEmpty()) throw RuntimeException("Plan paths[] is empty")
 
                         main.post {
-                            addLog("   План: ${paths.size} файлов")
+                            addLog("   PLAN OK. RAW (первые 300 символов):")
+                            addLog("   " + rawPlan.take(300).replace("\n", "\\n"))
+                            addLog("   Файлов: ${paths.size}")
                             paths.forEach { addLog("   - $it") }
                             addLog("2) Генерирую контент файлов по одному и загружаю в GitHub...")
                         }
