@@ -14,7 +14,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
-import org.json.JSONArray
 import kotlin.concurrent.thread
 
 @Composable
@@ -28,15 +27,10 @@ fun BuilderScreen(context: Context) {
     val main = remember { Handler(Looper.getMainLooper()) }
     val listState = rememberLazyListState()
 
-    fun addLog(s: String) {
-        logLines.add(s)
-    }
+    fun addLog(s: String) = logLines.add(s)
 
-    // автоскролл на последнюю строку
     LaunchedEffect(logLines.size) {
-        if (logLines.isNotEmpty()) {
-            listState.animateScrollToItem(logLines.size - 1)
-        }
+        if (logLines.isNotEmpty()) listState.animateScrollToItem(logLines.size - 1)
     }
 
     Column(Modifier.fillMaxSize().padding(12.dp)) {
@@ -70,25 +64,27 @@ fun BuilderScreen(context: Context) {
                 busy = true
                 apkUri = null
                 logLines.clear()
-                addLog("1) Запрашиваю у локальной модели JSON с файлами...")
+                addLog("1) Запрашиваю у локальной модели PLAN (список файлов)...")
 
                 thread {
                     try {
-                        val spec = LocalModelApi.requestFilesJson(desc)
+                        val plan = LocalModelApi.requestPlan(desc)
+                        val commitMsg = plan.optString("commit_message", "AI update")
+                        val paths = LocalModelApi.planToPaths(plan)
+                        if (paths.isEmpty()) throw RuntimeException("Plan paths[] is empty")
 
-                        val commitMsg = spec.optString("commit_message", "AI update")
-                        val files = spec.optJSONArray("files") ?: JSONArray()
-                        if (files.length() == 0) throw RuntimeException("JSON files[] is empty")
+                        main.post {
+                            addLog("   План: ${paths.size} файлов")
+                            paths.forEach { addLog("   - $it") }
+                            addLog("2) Генерирую контент файлов по одному и загружаю в GitHub...")
+                        }
 
                         val gh = GithubApi(owner = "bobbibob", repo = "MyComposeApp", token = token)
 
-                        main.post { addLog("2) Загружаю файлы в GitHub (commit)...") }
-
                         var lastCommitSha = ""
-                        for (i in 0 until files.length()) {
-                            val f = files.getJSONObject(i)
-                            val path = f.getString("path")
-                            val content = f.getString("content")
+                        for ((idx, path) in paths.withIndex()) {
+                            main.post { addLog("   (${idx + 1}/${paths.size}) Генерирую: $path") }
+                            val content = LocalModelApi.requestFileContent(desc, path)
 
                             val sha = gh.getFileSha(path)
                             lastCommitSha = gh.putFile(
@@ -97,8 +93,7 @@ fun BuilderScreen(context: Context) {
                                 message = commitMsg,
                                 shaIfExists = sha
                             )
-
-                            main.post { addLog("   - OK: $path") }
+                            main.post { addLog("      OK uploaded: $path") }
                         }
 
                         main.post { addLog("3) Жду GitHub Actions: Android Debug APK...") }
