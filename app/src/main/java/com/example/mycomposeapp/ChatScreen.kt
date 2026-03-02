@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -18,7 +19,6 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.snapshotFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -33,14 +33,11 @@ fun ChatScreen() {
 
     var input by remember { mutableStateOf(TextFieldValue("")) }
     var isSending by remember { mutableStateOf(false) }
-
     val messages = remember { mutableStateListOf<ChatMsg>() }
 
     // автоскролл когда добавляются сообщения
     LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
-        }
+        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
     }
 
     // автоскролл при стриминге: когда меняется текст последнего сообщения
@@ -49,9 +46,7 @@ fun ChatScreen() {
             .filterNotNull()
             .distinctUntilChanged()
             .collect {
-                if (messages.isNotEmpty()) {
-                    listState.scrollToItem(messages.size - 1)
-                }
+                if (messages.isNotEmpty()) listState.scrollToItem(messages.size - 1)
             }
     }
 
@@ -78,13 +73,9 @@ fun ChatScreen() {
             state = listState,
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            items(messages) { m ->
-                BubbleRow(ctx = ctx, msg = m)
-            }
+            items(messages) { m -> BubbleRow(ctx = ctx, msg = m) }
 
-            if (isSending && (messages.lastOrNull()?.role != Role.MODEL || messages.lastOrNull()?.text?.isNotEmpty() == true)) {
-                // уже есть пузырёк модели — ничего
-            } else if (isSending) {
+            if (isSending && messages.lastOrNull()?.role != Role.MODEL) {
                 item {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
                         Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
@@ -102,9 +93,7 @@ fun ChatScreen() {
         Divider()
 
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             OutlinedTextField(
@@ -126,15 +115,14 @@ fun ChatScreen() {
                     input = TextFieldValue("")
                     messages.add(ChatMsg(Role.USER, text))
 
-                    // добавляем пустой пузырёк модели, будем дописывать поток
                     val modelIndex = messages.size
                     messages.add(ChatMsg(Role.MODEL, ""))
                     isSending = true
 
-                    scope.launch {
+                    scope.launch(Dispatchers.IO) {
                         try {
                             LocalModelApi.chatStream(text) { piece ->
-                                withContext(Dispatchers.Main) {
+                                scope.launch(Dispatchers.Main) {
                                     val cur = messages[modelIndex].text
                                     messages[modelIndex] = messages[modelIndex].copy(text = cur + piece)
                                 }
@@ -154,19 +142,14 @@ fun ChatScreen() {
         }
 
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp)
-                .padding(bottom = 12.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 12.dp),
             horizontalArrangement = Arrangement.End
         ) {
-            TextButton(
-                onClick = {
-                    messages.clear()
-                    isSending = false
-                    input = TextFieldValue("")
-                }
-            ) { Text("Clear chat") }
+            TextButton(onClick = {
+                messages.clear()
+                isSending = false
+                input = TextFieldValue("")
+            }) { Text("Clear chat") }
         }
     }
 }
@@ -174,7 +157,6 @@ fun ChatScreen() {
 @Composable
 private fun BubbleRow(ctx: Context, msg: ChatMsg) {
     val isUser = msg.role == Role.USER
-
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
