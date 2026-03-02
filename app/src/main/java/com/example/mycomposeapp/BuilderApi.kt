@@ -1,9 +1,9 @@
 package com.example.mycomposeapp
 
-import okhttp3.MediaType
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit
 object BuilderApi {
     private const val ENDPOINT = "http://127.0.0.1:8080/v1/chat/completions"
 
-    private val JSON: MediaType = MediaType.get("application/json; charset=utf-8")
+    private val JSON = "application/json; charset=utf-8".toMediaType()
 
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
@@ -54,21 +54,22 @@ $spec
 
         val req = Request.Builder()
             .url(ENDPOINT)
-            .post(RequestBody.create(JSON, payload))
+            .post(payload.toRequestBody(JSON))
             .build()
 
         client.newCall(req).execute().use { resp ->
-            val body = resp.body()?.string() ?: ""
-            if (!resp.isSuccessful) return "HTTP ${resp.code()}: $body"
+            val bodyStr = resp.body?.string() ?: ""
+            if (!resp.isSuccessful) return "HTTP ${resp.code}: $bodyStr"
+
             return try {
-                val root = JSONObject(body)
+                val root = JSONObject(bodyStr)
                 root.getJSONArray("choices")
                     .getJSONObject(0)
                     .getJSONObject("message")
                     .getString("content")
                     .trim()
             } catch (e: Exception) {
-                "Error: bad JSON from server\n$body"
+                "Error: bad JSON from server\n$bodyStr"
             }
         }
     }
