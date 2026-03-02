@@ -4,99 +4,85 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 @Composable
 fun BuilderScreen() {
+
     var appName by remember { mutableStateOf("localai") }
     var description by remember { mutableStateOf("приложение чат с локальной моделью как chatgpt") }
-
     var status by remember { mutableStateOf("Idle") }
-    var planOutput by remember { mutableStateOf("") }
-    var isBusy by remember { mutableStateOf(false) }
+    var output by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text("Builder", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold)
+    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+
+        Text("AI Project Builder", style = MaterialTheme.typography.headlineLarge)
 
         OutlinedTextField(
             value = appName,
             onValueChange = { appName = it },
-            label = { Text("App name (обязательно)") },
-            singleLine = true,
+            label = { Text("App name") },
             modifier = Modifier.fillMaxWidth()
         )
 
         OutlinedTextField(
             value = description,
             onValueChange = { description = it },
-            label = { Text("Описание приложения") },
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 140.dp),
+            label = { Text("Description") },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp)
         )
 
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(
-                enabled = !isBusy && appName.trim().isNotEmpty() && description.trim().isNotEmpty(),
-                onClick = {
-                    isBusy = true
-                    status = "Generating..."
-                    planOutput = ""
-                    scope.launch {
-                        try {
-                            val out = withContext(Dispatchers.IO) {
-                                BuilderApi.generatePlan(appName, description)
-                            }
-                            planOutput = out
-                            status = "Success"
-                        } catch (e: Exception) {
-                            status = "Failed"
-                            planOutput = "Error: ${e.message ?: e.javaClass.simpleName}"
-                        } finally {
-                            isBusy = false
+        Button(
+            enabled = !busy,
+            onClick = {
+                busy = true
+                status = "Planning..."
+                output = ""
+
+                scope.launch {
+                    try {
+                        val files = withContext(Dispatchers.IO) {
+                            BuilderApi.generatePlan(appName, description)
                         }
+
+                        status = "Generating ${files.size} files..."
+
+                        withContext(Dispatchers.IO) {
+                            files.forEach { path ->
+                                val content = BuilderApi.generateFile(path, appName, description)
+                                val file = File("/storage/emulated/0/AI/generated/$path")
+                                file.parentFile?.mkdirs()
+                                file.writeText(content)
+                            }
+                        }
+
+                        status = "Done"
+                        output = "Generated ${files.size} files in /AI/generated/"
+
+                    } catch (e: Exception) {
+                        status = "Failed"
+                        output = "Error: ${e.message}"
+                    } finally {
+                        busy = false
                     }
                 }
-            ) {
-                Text(if (isBusy) "Generating..." else "Generate plan")
             }
-
-            OutlinedButton(
-                enabled = !isBusy,
-                onClick = {
-                    status = "Idle"
-                    planOutput = ""
-                }
-            ) { Text("Clear") }
+        ) {
+            Text(if (busy) "Working..." else "Generate Project")
         }
 
-        Text("Status: $status", style = MaterialTheme.typography.bodyMedium)
-
-        Text("Plan output", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-
+        Text("Status: $status")
         OutlinedTextField(
-            value = planOutput,
-            onValueChange = { planOutput = it },
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f, fill = true),
-            placeholder = { Text("Сначала нажми Generate plan. План появится здесь (JSON).") }
-        )
-
-        Text(
-            "Если висит на Generating — проверь, что llama-server запущен и слушает 127.0.0.1:8080.",
-            style = MaterialTheme.typography.bodySmall
+            value = output,
+            onValueChange = {},
+            modifier = Modifier.fillMaxWidth().weight(1f)
         )
     }
 }
