@@ -16,6 +16,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.snapshotFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -33,13 +36,24 @@ fun ChatScreen() {
 
     val messages = remember { mutableStateListOf<ChatMsg>() }
 
-    fun scrollToBottom() {
-        scope.launch {
-            if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
+    // автоскролл когда добавляются сообщения
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
         }
     }
 
-    LaunchedEffect(messages.size) { scrollToBottom() }
+    // автоскролл при стриминге: когда меняется текст последнего сообщения
+    LaunchedEffect(Unit) {
+        snapshotFlow { messages.lastOrNull()?.text }
+            .filterNotNull()
+            .distinctUntilChanged()
+            .collect {
+                if (messages.isNotEmpty()) {
+                    listState.scrollToItem(messages.size - 1)
+                }
+            }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
@@ -56,15 +70,7 @@ fun ChatScreen() {
 
         Divider()
 
-        LazyColumn(state = listState,
-
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.lastIndex)
-        }
-    }
-
-        val listState = rememberLazyListState()
+        LazyColumn(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
@@ -76,9 +82,8 @@ fun ChatScreen() {
                 BubbleRow(ctx = ctx, msg = m)
             }
 
-            // если ещё не пришёл ни один символ — показываем "..."
             if (isSending && (messages.lastOrNull()?.role != Role.MODEL || messages.lastOrNull()?.text?.isNotEmpty() == true)) {
-                // ничего
+                // уже есть пузырёк модели — ничего
             } else if (isSending) {
                 item {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
@@ -121,7 +126,7 @@ fun ChatScreen() {
                     input = TextFieldValue("")
                     messages.add(ChatMsg(Role.USER, text))
 
-                    // добавляем "пустой" пузырёк модели, будем дописывать туда поток
+                    // добавляем пустой пузырёк модели, будем дописывать поток
                     val modelIndex = messages.size
                     messages.add(ChatMsg(Role.MODEL, ""))
                     isSending = true
@@ -129,8 +134,7 @@ fun ChatScreen() {
                     scope.launch {
                         try {
                             LocalModelApi.chatStream(text) { piece ->
-                                // обновляем UI на главном потоке
-                                scope.launch(Dispatchers.Main) {
+                                withContext(Dispatchers.Main) {
                                     val cur = messages[modelIndex].text
                                     messages[modelIndex] = messages[modelIndex].copy(text = cur + piece)
                                 }
