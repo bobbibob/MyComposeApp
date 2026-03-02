@@ -5,7 +5,6 @@ import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -16,10 +15,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private enum class Role { USER, MODEL }
-
 private data class ChatMsg(val role: Role, val text: String)
 
 @Composable
@@ -31,12 +31,7 @@ fun ChatScreen() {
     var input by remember { mutableStateOf(TextFieldValue("")) }
     var isSending by remember { mutableStateOf(false) }
 
-    val messages = remember {
-        mutableStateListOf(
-            ChatMsg(Role.USER, "привет"),
-            ChatMsg(Role.MODEL, "Привет! Как я могу помочь?")
-        )
-    }
+    val messages = remember { mutableStateListOf<ChatMsg>() }
 
     fun scrollToBottom() {
         scope.launch {
@@ -47,7 +42,6 @@ fun ChatScreen() {
     LaunchedEffect(messages.size) { scrollToBottom() }
 
     Column(modifier = Modifier.fillMaxSize()) {
-
         Text(
             "Local Model Chat",
             style = MaterialTheme.typography.headlineMedium,
@@ -55,7 +49,7 @@ fun ChatScreen() {
         )
 
         Text(
-            "API: http://127.0.0.1:8080/v1/chat/completions",
+            "API: http://127.0.0.1:8080/v1/chat/completions (stream)",
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
         )
@@ -71,22 +65,16 @@ fun ChatScreen() {
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             items(messages) { m ->
-                BubbleRow(
-                    ctx = ctx,
-                    msg = m
-                )
+                BubbleRow(ctx = ctx, msg = m)
             }
 
-            if (isSending) {
+            // если ещё не пришёл ни один символ — показываем "..."
+            if (isSending && (messages.lastOrNull()?.role != Role.MODEL || messages.lastOrNull()?.text?.isNotEmpty() == true)) {
+                // ничего
+            } else if (isSending) {
                 item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Start
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(18.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant
-                        ) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
                             Text(
                                 "…",
                                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -106,7 +94,6 @@ fun ChatScreen() {
                 .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-
             OutlinedTextField(
                 value = input,
                 onValueChange = { input = it },
@@ -118,28 +105,40 @@ fun ChatScreen() {
             Spacer(Modifier.width(8.dp))
 
             Button(
+                enabled = !isSending,
                 onClick = {
                     val text = input.text.trim()
-                    if (text.isEmpty() || isSending) return@Button
+                    if (text.isEmpty()) return@Button
 
-                    messages.add(ChatMsg(Role.USER, text))
                     input = TextFieldValue("")
+                    messages.add(ChatMsg(Role.USER, text))
+
+                    // добавляем "пустой" пузырёк модели, будем дописывать туда поток
+                    val modelIndex = messages.size
+                    messages.add(ChatMsg(Role.MODEL, ""))
                     isSending = true
 
                     scope.launch {
-                        val reply = try {
-                            LocalModelApi.chat(text)
+                        try {
+                            LocalModelApi.chatStream(text) { piece ->
+                                // обновляем UI на главном потоке
+                                scope.launch(Dispatchers.Main) {
+                                    val cur = messages[modelIndex].text
+                                    messages[modelIndex] = messages[modelIndex].copy(text = cur + piece)
+                                }
+                            }
                         } catch (e: Exception) {
-                            "Error: ${e.message ?: e::class.java.simpleName}"
+                            withContext(Dispatchers.Main) {
+                                messages[modelIndex] = messages[modelIndex].copy(
+                                    text = "Error: ${e.message ?: e::class.java.simpleName}"
+                                )
+                            }
+                        } finally {
+                            withContext(Dispatchers.Main) { isSending = false }
                         }
-                        isSending = false
-                        messages.add(ChatMsg(Role.MODEL, reply))
                     }
-                },
-                enabled = !isSending
-            ) {
-                Text(if (isSending) "…" else "Send")
-            }
+                }
+            ) { Text(if (isSending) "…" else "Send") }
         }
 
         Row(
@@ -172,18 +171,15 @@ private fun BubbleRow(ctx: Context, msg: ChatMsg) {
             val bg = if (isUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
             val fg = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
 
-            Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = bg
-            ) {
+            Surface(shape = RoundedCornerShape(18.dp), color = bg) {
                 Text(
-                    text = msg.text,
+                    text = if (msg.text.isEmpty() && !isUser) "…" else msg.text,
                     color = fg,
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
                 )
             }
 
-            if (!isUser) {
+            if (!isUser && msg.text.isNotEmpty()) {
                 TextButton(
                     contentPadding = PaddingValues(0.dp),
                     onClick = {
