@@ -10,15 +10,12 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -35,19 +32,12 @@ fun ChatScreen() {
     var isSending by remember { mutableStateOf(false) }
     val messages = remember { mutableStateListOf<ChatMsg>() }
 
-    // автоскролл когда добавляются сообщения
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
-    }
-
-    // автоскролл при стриминге: когда меняется текст последнего сообщения
-    LaunchedEffect(Unit) {
-        snapshotFlow { messages.lastOrNull()?.text }
-            .filterNotNull()
-            .distinctUntilChanged()
-            .collect {
-                if (messages.isNotEmpty()) listState.scrollToItem(messages.size - 1)
-            }
+    fun scrollToBottom(animated: Boolean) {
+        scope.launch {
+            if (messages.isEmpty()) return@launch
+            val idx = messages.size - 1
+            if (animated) listState.animateScrollToItem(idx) else listState.scrollToItem(idx)
+        }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -74,20 +64,6 @@ fun ChatScreen() {
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             items(messages) { m -> BubbleRow(ctx = ctx, msg = m) }
-
-            if (isSending && messages.lastOrNull()?.role != Role.MODEL) {
-                item {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-                        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                            Text(
-                                "…",
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
         }
 
         Divider()
@@ -115,16 +91,25 @@ fun ChatScreen() {
                     input = TextFieldValue("")
                     messages.add(ChatMsg(Role.USER, text))
 
+                    // сразу скроллим к сообщению юзера
+                    scrollToBottom(animated = true)
+
                     val modelIndex = messages.size
-                    messages.add(ChatMsg(Role.MODEL, ""))
+                    messages.add(ChatMsg(Role.MODEL, "")) // пустой пузырёк
                     isSending = true
+
+                    // скроллим к пустому пузырьку модели
+                    scrollToBottom(animated = false)
 
                     scope.launch(Dispatchers.IO) {
                         try {
                             LocalModelApi.chatStream(text) { piece ->
+                                // обновляем UI и скроллим после каждого кусочка
                                 scope.launch(Dispatchers.Main) {
                                     val cur = messages[modelIndex].text
                                     messages[modelIndex] = messages[modelIndex].copy(text = cur + piece)
+                                    // держим низ во время стрима
+                                    scrollToBottom(animated = false)
                                 }
                             }
                         } catch (e: Exception) {
@@ -134,7 +119,11 @@ fun ChatScreen() {
                                 )
                             }
                         } finally {
-                            withContext(Dispatchers.Main) { isSending = false }
+                            withContext(Dispatchers.Main) {
+                                isSending = false
+                                // финальный скролл в самый низ
+                                scrollToBottom(animated = true)
+                            }
                         }
                     }
                 }
