@@ -3,51 +3,84 @@ package com.example.mycomposeapp
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Column
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import com.example.mycomposeapp.ui.*
+import com.example.mycomposeapp.ui.theme.LocalChatTheme
+import kotlinx.coroutines.*
+import okhttp3.*
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
+
+    private val client = OkHttpClient()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         setContent {
-            MaterialTheme {
-                Surface {
-                    AppRoot()
-                }
-            }
-        }
-    }
-}
+            LocalChatTheme {
 
-@Composable
-private fun AppRoot() {
-    val context = LocalContext.current
-    var tab by remember { mutableStateOf(0) }
-    val tabs = listOf("Chat", "Builder")
+                val clipboard = LocalClipboardManager.current
+                var messages by remember { mutableStateOf(listOf<ChatMsg>()) }
+                var typing by remember { mutableStateOf(false) }
+                val scope = rememberCoroutineScope()
 
-    Column {
-        TabRow(selectedTabIndex = tab) {
-            tabs.forEachIndexed { i, title ->
-                Tab(
-                    selected = tab == i,
-                    onClick = { tab = i },
-                    text = { Text(title) }
+                ChatScreen(
+                    messages = messages,
+                    isTyping = typing,
+                    onCopy = {
+                        clipboard.setText(AnnotatedString(it))
+                    },
+                    onClear = {
+                        messages = emptyList()
+                    },
+                    onSend = { text ->
+
+                        messages = messages + ChatMsg(Role.USER, text)
+                        typing = true
+
+                        scope.launch(Dispatchers.IO) {
+
+                            val body = JSONObject()
+                            body.put("message", text)
+
+                            val request = Request.Builder()
+                                .url("http://127.0.0.1:8080/chat")
+                                .post(
+                                    RequestBody.create(
+                                        MediaType.parse("application/json"),
+                                        body.toString()
+                                    )
+                                )
+                                .build()
+
+                            try {
+                                client.newCall(request).execute().use { resp ->
+                                    val json = JSONObject(resp.body!!.string())
+                                    val reply = json.getString("reply")
+
+                                    withContext(Dispatchers.Main) {
+                                        typing = false
+                                        messages =
+                                            messages + ChatMsg(Role.MODEL, reply)
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) {
+                                    typing = false
+                                    messages =
+                                        messages + ChatMsg(
+                                            Role.MODEL,
+                                            "ERROR: " + e.message
+                                        )
+                                }
+                            }
+                        }
+                    }
                 )
             }
-        }
-        when (tab) {
-            0 -> ChatScreen()
-            1 -> BuilderScreen(context)
         }
     }
 }
