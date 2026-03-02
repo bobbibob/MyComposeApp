@@ -4,73 +4,67 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 object BuilderApi {
+    // llama-server OpenAI-compatible endpoint
     private const val ENDPOINT = "http://127.0.0.1:8080/v1/chat/completions"
-
     private val JSON = "application/json; charset=utf-8".toMediaType()
 
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .writeTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(45, TimeUnit.SECONDS)
-        .callTimeout(50, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(90, TimeUnit.SECONDS)
         .build()
 
-    fun generatePlan(appName: String, spec: String): String {
-        val system = """
-You are an expert Android developer.
-Return ONLY valid JSON. No markdown. No extra text.
-Schema:
-{
-  "app_name": "...",
-  "package": "com.example.<something>",
-  "min_sdk": 26,
-  "compile_sdk": 34,
-  "changes": [
-    {"path":"...", "action":"create|modify|delete", "summary":"..."}
-  ]
-}
-""".trimIndent()
+    /**
+     * Returns raw model content (choices[0].message.content) or throws with readable error.
+     */
+    fun generatePlan(appName: String, description: String): String {
+        val sys = "You are a software planner. Output ONLY valid JSON. No markdown. No explanations."
+        val user = buildString {
+            append("Create a minimal implementation plan for an Android app.\n")
+            append("App name: ").append(appName.trim()).append("\n")
+            append("Description: ").append(description.trim()).append("\n\n")
+            append("Return ONLY JSON with keys:\n")
+            append("{\"summary\":string,\"files\":[{\"path\":string,\"action\":\"create|update\",\"reason\":string}],\"steps\":[string]}\n")
+            append("Keep it short.\n")
+        }
 
-        val user = """
-APP_NAME: $appName
-
-SPEC:
-$spec
-""".trimIndent()
-
-        val payload = JSONObject().apply {
-            put("messages", JSONArray().apply {
-                put(JSONObject().put("role","system").put("content", system))
-                put(JSONObject().put("role","user").put("content", user))
+        val bodyJson = JSONObject().apply {
+            put("messages", org.json.JSONArray().apply {
+                put(JSONObject().put("role", "system").put("content", sys))
+                put(JSONObject().put("role", "user").put("content", user))
             })
+            // keep responses short so it doesn't hang
             put("temperature", 0.2)
-            put("max_tokens", 900)
-        }.toString()
+            put("max_tokens", 500)
+        }
 
         val req = Request.Builder()
             .url(ENDPOINT)
-            .post(payload.toRequestBody(JSON))
+            .post(bodyJson.toString().toRequestBody(JSON))
             .build()
 
         client.newCall(req).execute().use { resp ->
-            val bodyStr = resp.body?.string() ?: ""
-            if (!resp.isSuccessful) return "HTTP ${resp.code}: $bodyStr"
-
-            return try {
-                val root = JSONObject(bodyStr)
-                root.getJSONArray("choices")
-                    .getJSONObject(0)
-                    .getJSONObject("message")
-                    .getString("content")
-                    .trim()
-            } catch (e: Exception) {
-                "Error: bad JSON from server\n$bodyStr"
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                // show server-provided error if any
+                throw RuntimeException("HTTP ${resp.code}: ${text.take(4000)}")
             }
+            val root = JSONObject(text)
+            val choices = root.optJSONArray("choices")
+            if (choices == null || choices.length() == 0) {
+                throw RuntimeException("Bad response: no choices. Raw=${text.take(2000)}")
+            }
+            val msg = choices.getJSONObject(0).optJSONObject("message")
+            val content = msg?.optString("content") ?: ""
+            if (content.isBlank()) {
+                throw RuntimeException("Empty content. Raw=${text.take(2000)}")
+            }
+            return content
         }
     }
 }
