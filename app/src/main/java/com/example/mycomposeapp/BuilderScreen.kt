@@ -25,11 +25,11 @@ fun BuilderScreen() {
     var spec by remember { mutableStateOf(TextFieldValue("")) }
 
     var isWorking by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("Idle") }
     var planText by remember { mutableStateOf("") }
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text("Builder", style = MaterialTheme.typography.headlineMedium)
-
         Spacer(Modifier.height(12.dp))
 
         OutlinedTextField(
@@ -37,7 +37,7 @@ fun BuilderScreen() {
             onValueChange = { appName = it },
             modifier = Modifier.fillMaxWidth(),
             label = { Text("App name (обязательно)") },
-            placeholder = { Text("Например: LocalChat") },
+            placeholder = { Text("Например: LocalAI") },
             singleLine = true
         )
 
@@ -61,29 +61,32 @@ fun BuilderScreen() {
                     if (name.isEmpty() || s.isEmpty() || isWorking) return@Button
 
                     isWorking = true
+                    status = "Connecting to 127.0.0.1:8080…"
                     planText = ""
 
                     scope.launch(Dispatchers.IO) {
                         val out = try {
+                            status = "Requesting model…"
                             BuilderApi.generatePlan(name, s)
                         } catch (e: Exception) {
                             "Error: ${e.message ?: e::class.java.simpleName}"
                         }
+
                         withContext(Dispatchers.Main) {
                             planText = out
+                            status = if (out.startsWith("HTTP") || out.startsWith("Error")) "Failed" else "Done"
                             isWorking = false
                         }
                     }
                 },
                 enabled = appName.text.trim().isNotEmpty() && spec.text.trim().isNotEmpty() && !isWorking,
                 modifier = Modifier.weight(1f)
-            ) {
-                Text(if (isWorking) "Generating…" else "Generate plan")
-            }
+            ) { Text(if (isWorking) "Generating…" else "Generate plan") }
 
             OutlinedButton(
                 onClick = {
                     planText = ""
+                    status = "Idle"
                 },
                 enabled = !isWorking,
                 modifier = Modifier.weight(1f)
@@ -91,34 +94,35 @@ fun BuilderScreen() {
         }
 
         Spacer(Modifier.height(10.dp))
+        Text("Status: $status", style = MaterialTheme.typography.bodySmall)
 
-        if (planText.isNotEmpty()) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Plan output", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(10.dp))
 
-                TextButton(onClick = {
-                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    cm.setPrimaryClip(ClipData.newPlainText("plan", planText))
-                }) { Text("Copy") }
-            }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("Plan output", style = MaterialTheme.typography.titleMedium)
+            TextButton(onClick = {
+                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("plan", planText))
+            }, enabled = planText.isNotEmpty()) { Text("Copy") }
+        }
 
-            Surface(
-                tonalElevation = 2.dp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 120.dp, max = 260.dp)
-            ) {
-                Text(
-                    planText,
-                    modifier = Modifier.padding(12.dp).verticalScroll(rememberScrollState()),
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-        } else {
+        Surface(
+            tonalElevation = 2.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 160.dp, max = 280.dp)
+        ) {
             Text(
-                "Сначала нажми Generate plan. План появится здесь (JSON).",
+                if (planText.isBlank()) "(пока пусто)" else planText,
+                modifier = Modifier.padding(12.dp).verticalScroll(rememberScrollState()),
                 style = MaterialTheme.typography.bodySmall
             )
         }
+
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Если висит на Connecting — проверь, что llama-server запущен и слушает 127.0.0.1:8080.",
+            style = MaterialTheme.typography.bodySmall
+        )
     }
 }
