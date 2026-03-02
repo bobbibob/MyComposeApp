@@ -58,7 +58,7 @@ class MainActivity : ComponentActivity() {
                     val body = payload.toRequestBody(mediaType)
 
                     val request = Request.Builder()
-                        .url("http://127.0.0.1:8080/chat")
+                        .url("http://127.0.0.1:8080/v1/chat/completions")
                         .post(body)
                         .build()
 

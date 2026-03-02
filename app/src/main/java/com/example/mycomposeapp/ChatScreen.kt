@@ -70,13 +70,13 @@ fun ChatScreen() {
         }
 
         Spacer(Modifier.height(6.dp))
-        Text("API: http://127.0.0.1:8080/chat", style = MaterialTheme.typography.bodySmall)
+        Text("API: http://127.0.0.1:8080/v1/chat/completions", style = MaterialTheme.typography.bodySmall)
     }
 }
 
 private fun postToLocalModel(message: String): String {
     return try {
-        val url = URL("http://127.0.0.1:8080/chat")
+        val url = URL("http://127.0.0.1:8080/v1/chat/completions")
         val conn = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
