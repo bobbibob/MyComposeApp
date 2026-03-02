@@ -56,7 +56,15 @@ fun ChatScreen() {
 
         Divider()
 
-        LazyColumn(
+        LazyColumn(state = listState,
+
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.lastIndex)
+        }
+    }
+
+        val listState = rememberLazyListState()
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
